@@ -66,6 +66,21 @@ describe('planTrip', () => {
     await expect(api.getTrip('x')).rejects.toThrow(/no longer exists/i)
   })
 
+  it('does not blame a missing trip when the API itself is not there', async () => {
+    // A deploy with no VITE_API_BASE_URL aims POST /api/trips/ at the static
+    // host, which 404s. That is not a missing trip.
+    mockFetch(404, {})
+    await expect(
+      api.planTrip({
+        origin: 'A',
+        destination: 'B',
+        departure_at: '2026-01-15T12:00:00.000Z',
+        load_lb: 100,
+        checkpoint_interval_miles: 25,
+      }),
+    ).rejects.toThrow(/could not reach the routing service/i)
+  })
+
   it('survives a non-JSON error body', async () => {
     vi.stubGlobal(
       'fetch',
