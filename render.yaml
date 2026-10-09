@@ -1,0 +1,29 @@
+# Deploys the Django API. Netlify cannot host it: it serves static files and
+# serverless functions, not a long-running WSGI process.
+#
+# After the first deploy, set CORS_ALLOWED_ORIGINS to your Netlify origin
+# (for example https://your-site.netlify.app) — it is the one value that
+# cannot be filled in ahead of time.
+services:
+  - type: web
+    name: truck-routing-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: "pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate"
+    startCommand: "gunicorn config.wsgi:application --bind 0.0.0.0:$PORT"
+    healthCheckPath: /api/health/
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.3"
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: DJANGO_DEBUG
+        value: "False"
+      - key: DJANGO_ALLOWED_HOSTS
+        value: ".onrender.com"
+      - key: DJANGO_SECURE_SSL_REDIRECT
+        value: "True"
+      # Set this to your Netlify origin once the site is live.
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false

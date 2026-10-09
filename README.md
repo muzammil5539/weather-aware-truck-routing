@@ -158,6 +158,51 @@ docs/
 
 ---
 
+## Deploying
+
+The two halves deploy separately. **Netlify cannot host the Django API** — it
+serves static files and serverless functions, not a long-running WSGI process —
+so the backend goes somewhere that can run a process, and the frontend is told
+where to find it at build time.
+
+### 1. Backend first
+
+`render.yaml` deploys the API to [Render](https://render.com) as a Blueprint.
+It sets everything except `CORS_ALLOWED_ORIGINS`, which cannot be known until
+the frontend has a URL. Note the API's origin — something like
+`https://truck-routing-api.onrender.com` — and check `/api/health/` returns
+`{"status": "ok"}`.
+
+> Render's free tier has an ephemeral filesystem, so the default SQLite
+> database resets on redeploy. Planned trips are regenerable, so this is fine
+> for a demo; attach a Postgres instance and set `DATABASE_URL` to keep them.
+
+### 2. Frontend second
+
+`netlify.toml` is committed at the repo root and already tells Netlify
+everything structural: the app is in `frontend/`, not the repo root; the
+publish directory is `frontend/dist`; and `/*` rewrites to `/index.html` so
+`/trips/{id}` survives a reload.
+
+The one thing it cannot contain is your API's URL. In **Site settings →
+Environment variables**, add:
+
+```
+VITE_API_BASE_URL = https://truck-routing-api.onrender.com
+```
+
+This is read at **build time**, not run time — Vite inlines it into the bundle.
+Adding it after a build has no effect until you redeploy, so trigger a fresh
+deploy (**Deploys → Trigger deploy → Clear cache and deploy site**).
+
+### 3. Close the loop
+
+Set `CORS_ALLOWED_ORIGINS` on the backend to your Netlify origin
+(`https://your-site.netlify.app`, no trailing slash) and redeploy it. Until you
+do, the browser will block every API call as a cross-origin request.
+
+---
+
 ## Documentation
 
 - [docs/DESIGN.md](docs/DESIGN.md) — architecture, data model, API, frontend

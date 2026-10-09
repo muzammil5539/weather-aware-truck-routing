@@ -1,0 +1,39 @@
+# Netlify builds the frontend only. The Django API cannot run here — Netlify
+# serves static files and serverless functions, not a long-running WSGI app.
+# Deploy the backend separately (see render.yaml) and point VITE_API_BASE_URL
+# at it in Netlify's environment variables.
+
+[build]
+  # The app is not at the repo root, so Netlify has to be told where it lives.
+  base = "frontend"
+  command = "npm run build"
+  # Relative to `base`, so this resolves to frontend/dist.
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# React Router owns /trips/:id. Without this, a reload or a shared trip link
+# asks Netlify for a file that does not exist and gets a 404.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+
+# Hashed assets are immutable; the HTML entry point must never be cached.
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache"
