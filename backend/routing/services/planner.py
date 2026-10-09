@@ -7,6 +7,7 @@ rank the routes.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from math import ceil
 from datetime import datetime, timedelta, timezone
 
 from routing.services import geocode, osrm, weather
@@ -170,21 +171,37 @@ def _segment_miles(samples: list[SampledPoint], total_miles: float) -> list[floa
     return out
 
 
-def _corridor_points(routes: list[osrm.RouteGeometry]) -> list[tuple[float, float]]:
-    """A thinned set of points covering every route, for the heatmap layer."""
+def _corridor_points(sampled: list[list[SampledPoint]]) -> list[tuple[float, float]]:
+    """Points for the heatmap layer, reusing the checkpoints already sampled.
+
+    The corridor *is* the routes, so re-sampling them at a second spacing only
+    invented a second set of coordinates to ask the forecast provider about -
+    roughly doubling the locations per trip against a rate-limited free tier.
+    Thinning the existing checkpoints costs nothing extra and has the better
+    property that the heatmap lines up exactly with the rows in the table.
+    """
+    budget_per_route = max(4, MAX_HEATMAP_POINTS // max(1, len(sampled)))
     points: list[tuple[float, float]] = []
-    budget_per_route = max(4, MAX_HEATMAP_POINTS // max(1, len(routes)))
-    for route in routes:
-        spacing = max(MIN_HEATMAP_SPACING_MILES, route.distance_miles / budget_per_route)
-        for sample in sample_every(route.points, spacing):
-            points.append((round(sample.lat, 3), round(sample.lon, 3)))
-    # Dedupe while preserving order; routes overlap heavily near the endpoints.
+
+    for samples in sampled:
+        if not samples:
+            continue
+        stride = max(1, ceil(len(samples) / budget_per_route))
+        chosen = samples[::stride]
+        # Rounded exactly as checkpoint coordinates are, so the two collapse
+        # into one forecast lookup rather than two.
+        for sample in chosen:
+            points.append((round(sample.lat, 4), round(sample.lon, 4)))
+        end = (round(samples[-1].lat, 4), round(samples[-1].lon, 4))
+        if points and points[-1] != end:
+            points.append(end)
+
     seen: set[tuple[float, float]] = set()
     unique = []
-    for p in points:
-        if p not in seen:
-            seen.add(p)
-            unique.append(p)
+    for point in points:
+        if point not in seen:
+            seen.add(point)
+            unique.append(point)
     return unique[:MAX_HEATMAP_POINTS]
 
 
@@ -279,7 +296,7 @@ def plan_trip(
         sample_checkpoints(geometry, float(interval_miles)) for geometry in geometries
     ]
 
-    corridor = _corridor_points(geometries)
+    corridor = _corridor_points(sampled)
     checkpoint_coords = [
         (round(s.lat, 4), round(s.lon, 4)) for samples in sampled for s in samples
     ]

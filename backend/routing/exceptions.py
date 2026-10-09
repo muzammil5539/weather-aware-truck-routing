@@ -25,6 +25,18 @@ class NoRouteFound(UpstreamError):
         super().__init__("osrm", detail, status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
 
 
+class RateLimited(UpstreamError):
+    """The provider's free tier is exhausted for now."""
+
+    def __init__(self, provider: str, retry_after: str | None = None):
+        wait = f" Try again in about {retry_after} seconds." if retry_after else " Try again shortly."
+        super().__init__(
+            provider,
+            f"The free {provider} tier is rate-limited right now.{wait}",
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+
+
 class GeocodingError(UpstreamError):
     def __init__(self, detail: str):
         super().__init__("nominatim", detail, status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)

@@ -16,8 +16,18 @@ carrying.
 - **A map** of all routes, checkpoints, risk levels, ETAs and summaries.
 - **A corridor heatmap** with a 0–48 hour forecast slider.
 
-**No API keys required.** Routing (OSRM), geocoding (Nominatim) and forecasts
-(Open-Meteo) are all free services; the project runs immediately after clone.
+**No API keys required.** Routing, geocoding and forecasts all come from free,
+key-less services, and each has a **backup provider** that takes over when the
+primary rate-limits or goes down — so a live demo keeps working:
+
+| Need | Primary | Backup |
+|---|---|---|
+| Routing | OSRM demo server | FOSSGIS `routed-car` mirror |
+| Geocoding | Nominatim | Photon |
+| Forecasts | Open-Meteo | MET Norway |
+
+Forecasts are also cached for 30 minutes per coordinate, so replanning the same
+trip costs nothing upstream.
 
 ---
 
@@ -80,9 +90,10 @@ Both `.env.example` files list every variable with its default; copy each to
 | `DJANGO_DEBUG` | `True` | |
 | `DATABASE_URL` | SQLite file | Set for PostgreSQL |
 | `CORS_ALLOWED_ORIGINS` | `localhost:5173` | |
-| `OSRM_BASE_URL` | OSRM demo server | Swap for a hosted instance |
-| `NOMINATIM_BASE_URL` | OSM Nominatim | |
-| `OPEN_METEO_BASE_URL` | Open-Meteo | |
+| `OSRM_BASE_URLS` | OSRM demo, FOSSGIS mirror | Routing, tried in order |
+| `NOMINATIM_BASE_URL` / `PHOTON_BASE_URL` | Nominatim, Photon | Geocoding, primary then backup |
+| `OPEN_METEO_BASE_URL` / `MET_NO_BASE_URL` | Open-Meteo, MET Norway | Forecasts, primary then backup |
+| `REDIS_URL` | unset (in-process cache) | Share the forecast cache across workers |
 | `GEOCODER_USER_AGENT` | project string | Nominatim asks for a contact |
 | `VITE_API_BASE_URL` | empty (proxied) | API origin for a production build |
 

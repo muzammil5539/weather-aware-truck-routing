@@ -88,9 +88,25 @@ CORS_ALLOWED_ORIGINS = env_list(
 CORS_ALLOW_ALL_ORIGINS = env_bool("CORS_ALLOW_ALL_ORIGINS", False)
 
 # --- Upstream providers (all free, no API key) -------------------------------
-OSRM_BASE_URL = os.getenv("OSRM_BASE_URL", "https://router.project-osrm.org")
+# Each service lists its providers in preference order and falls through to the
+# next only on a rate limit, a timeout or a server fault. All are free and
+# key-less, so a demo keeps working when one of them throttles a shared cloud IP.
+OSRM_BASE_URLS = env_list(
+    "OSRM_BASE_URLS",
+    "https://router.project-osrm.org,https://routing.openstreetmap.de/routed-car",
+)
+OSRM_BASE_URL = OSRM_BASE_URLS[0]
+
 NOMINATIM_BASE_URL = os.getenv("NOMINATIM_BASE_URL", "https://nominatim.openstreetmap.org")
+PHOTON_BASE_URL = os.getenv("PHOTON_BASE_URL", "https://photon.komoot.io")
+
 OPEN_METEO_BASE_URL = os.getenv("OPEN_METEO_BASE_URL", "https://api.open-meteo.com/v1/forecast")
+MET_NO_BASE_URL = os.getenv(
+    "MET_NO_BASE_URL", "https://api.met.no/weatherapi/locationforecast/2.0/compact"
+)
+# MET Norway serves one coordinate per request, so a fallback trip fans out.
+# Their terms ask for a identifying User-Agent and modest concurrency.
+MET_NO_MAX_CONCURRENCY = int(os.getenv("MET_NO_MAX_CONCURRENCY", "5"))
 GEOCODER_USER_AGENT = os.getenv("GEOCODER_USER_AGENT", "weather-aware-truck-routing/1.0")
 UPSTREAM_TIMEOUT_SECONDS = float(os.getenv("UPSTREAM_TIMEOUT_SECONDS", "20"))
 
@@ -102,6 +118,20 @@ SECURE_HSTS_PRELOAD = SECURE_HSTS_SECONDS > 0
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
+
+# Forecasts are cached so a repeated trip costs the rate-limited free tier
+# nothing. In-process by default; set REDIS_URL to share it across workers.
+CACHES = {
+    "default": (
+        {"BACKEND": "django.core.cache.backends.redis.RedisCache", "LOCATION": os.getenv("REDIS_URL")}
+        if os.getenv("REDIS_URL")
+        else {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "truck-routing",
+            "OPTIONS": {"MAX_ENTRIES": 5000},
+        }
+    )
+}
 
 LOGGING = {
     "version": 1,

@@ -11,8 +11,10 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
 from django.conf import settings
+from django.core.cache import cache
 
 from routing.exceptions import UpstreamError
+from routing.services.fallback import first_success
 from routing.services.http import get_json
 
 HOURLY_VARIABLES = (
@@ -26,6 +28,12 @@ HOURLY_VARIABLES = (
 )
 MAX_LOCATIONS_PER_REQUEST = 50
 FORECAST_HORIZON_DAYS = 16
+# Open-Meteo prices a request by how many locations it carries, so a trip costs
+# roughly one call per checkpoint against a free tier. Forecasts only change
+# hourly, so caching each point turns a repeated demo of the same route into
+# zero upstream calls.
+CACHE_TTL_SECONDS = 1800
+CACHE_VERSION = "v1"
 
 
 @dataclass(frozen=True)
@@ -116,16 +124,15 @@ def clamp_to_forecast_window(start: datetime, end: datetime) -> tuple[date, date
     return start_date, end_date
 
 
-def fetch_hourly(
-    points: list[tuple[float, float]], start: datetime, end: datetime
-) -> list[PointForecast]:
-    """One forecast per input point, in the same order."""
-    if not points:
-        return []
+def _cache_key(point: tuple[float, float], start: date, end: date) -> str:
+    return f"om:{CACHE_VERSION}:{point[0]:.4f},{point[1]:.4f}:{start}:{end}"
 
-    start_date, end_date = clamp_to_forecast_window(start, end)
-    forecasts: list[PointForecast] = []
 
+def _fetch_open_meteo(
+    points: list[tuple[float, float]], start_date: date, end_date: date
+) -> dict[tuple[float, float], PointForecast]:
+    """The primary provider: many coordinates per request."""
+    out: dict[tuple[float, float], PointForecast] = {}
     for chunk_start in range(0, len(points), MAX_LOCATIONS_PER_REQUEST):
         chunk = points[chunk_start : chunk_start + MAX_LOCATIONS_PER_REQUEST]
         payload = get_json(
@@ -149,6 +156,53 @@ def fetch_hourly(
             raise UpstreamError(
                 "open-meteo", f"Expected {len(chunk)} forecasts, received {len(blocks)}."
             )
-        forecasts.extend(_parse_point(block) for block in blocks)
+        out.update({point: _parse_point(block) for point, block in zip(chunk, blocks)})
+    return out
 
-    return forecasts
+
+def _fetch_met_no(points: list[tuple[float, float]]) -> dict[tuple[float, float], PointForecast]:
+    """The fallback provider: one coordinate per request, fanned out."""
+    from routing.services import met_no
+
+    return met_no.fetch_many(points)
+
+
+def fetch_hourly(
+    points: list[tuple[float, float]], start: datetime, end: datetime
+) -> list[PointForecast]:
+    """One forecast per input point, in the same order.
+
+    Points already held in the cache are not requested again; only the misses
+    go upstream, and only to the fallback provider if the primary is throttling.
+    """
+    if not points:
+        return []
+
+    start_date, end_date = clamp_to_forecast_window(start, end)
+
+    resolved: dict[tuple[float, float], PointForecast] = {}
+    misses: list[tuple[float, float]] = []
+    pending: set[tuple[float, float]] = set()
+    for point in points:
+        if point in resolved or point in pending:
+            continue  # the same coordinate twice is still one forecast
+        cached = cache.get(_cache_key(point, start_date, end_date))
+        if cached is not None:
+            resolved[point] = PointForecast(cached)
+        else:
+            pending.add(point)
+            misses.append(point)
+
+    if misses:
+        fetched = first_success(
+            [
+                ("open-meteo", lambda: _fetch_open_meteo(misses, start_date, end_date)),
+                ("met.no", lambda: _fetch_met_no(misses)),
+            ],
+            "weather",
+        )
+        for point, forecast in fetched.items():
+            resolved[point] = forecast
+            cache.set(_cache_key(point, start_date, end_date), forecast.readings, CACHE_TTL_SECONDS)
+
+    return [resolved[point] for point in points]

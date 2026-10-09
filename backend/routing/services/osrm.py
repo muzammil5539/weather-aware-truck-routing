@@ -16,6 +16,7 @@ from math import atan2, cos, degrees, radians, sin
 from django.conf import settings
 
 from routing.exceptions import NoRouteFound, UpstreamError
+from routing.services.fallback import first_success
 from routing.services.geo import METERS_PER_MILE, cumulative_miles, decode_polyline, haversine_miles, point_at_distance
 from routing.services.http import get_json
 
@@ -106,16 +107,23 @@ def _detour_waypoint(
 
 
 def _request(coords: str, alternatives: int) -> dict:
-    return get_json(
-        "osrm",
-        f"{settings.OSRM_BASE_URL}/route/v1/driving/{coords}",
-        params={
-            "alternatives": str(alternatives) if alternatives > 0 else "false",
-            "overview": "full",
-            "geometries": "polyline",
-            "steps": "true",
-        },
-    )
+    """Ask each configured OSRM server in turn until one answers.
+
+    Every entry speaks the same protocol, so the mirrors are drop-in: only the
+    host differs. The public demo server throttles shared cloud IPs, which is
+    exactly when the FOSSGIS mirror earns its place.
+    """
+    params = {
+        "alternatives": str(alternatives) if alternatives > 0 else "false",
+        "overview": "full",
+        "geometries": "polyline",
+        "steps": "true",
+    }
+
+    def ask(base: str):
+        return lambda: get_json("osrm", f"{base}/route/v1/driving/{coords}", params=params)
+
+    return first_success([(base, ask(base)) for base in settings.OSRM_BASE_URLS], "routing")
 
 
 def _to_geometry(raw: dict, name: str, source: str) -> RouteGeometry | None:

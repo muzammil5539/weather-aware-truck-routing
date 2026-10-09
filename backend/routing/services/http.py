@@ -6,7 +6,7 @@ from django.conf import settings
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from routing.exceptions import UpstreamError
+from routing.exceptions import RateLimited, UpstreamError
 
 _session: requests.Session | None = None
 
@@ -18,7 +18,10 @@ def get_session() -> requests.Session:
         retry = Retry(
             total=2,
             backoff_factor=0.4,
-            status_forcelist=(429, 500, 502, 503, 504),
+            # 429 is deliberately absent. Retrying a rate limit triples the
+            # load that caused it; the only useful response is to stop and say
+            # so. Server faults are worth a retry, a rate limit is not.
+            status_forcelist=(500, 502, 503, 504),
             allowed_methods=frozenset({"GET"}),
         )
         adapter = HTTPAdapter(max_retries=retry, pool_maxsize=16)
@@ -34,6 +37,8 @@ def get_json(provider: str, url: str, params: dict | None = None, **kwargs) -> d
         response = get_session().get(
             url, params=params, timeout=settings.UPSTREAM_TIMEOUT_SECONDS, **kwargs
         )
+        if response.status_code == 429:
+            raise RateLimited(provider, response.headers.get("Retry-After"))
         response.raise_for_status()
         return response.json()
     except requests.Timeout as exc:
